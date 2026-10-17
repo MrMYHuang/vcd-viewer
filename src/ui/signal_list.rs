@@ -44,6 +44,27 @@ pub fn render_signal_context_menu(
         *action_delete = Some(loc);
         ui.close_menu();
     }
+    ui.menu_button("✏ Rename Alias", |ui| {
+        let mut alias_text = doc_signal.alias.clone().unwrap_or_default();
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut alias_text)
+                    .desired_width(140.0)
+                    .hint_text("Custom label..."),
+            )
+            .changed()
+        {
+            doc_signal.alias = if alias_text.trim().is_empty() {
+                None
+            } else {
+                Some(alias_text)
+            };
+        }
+        if ui.small_button("Reset to VCD Path").clicked() {
+            doc_signal.alias = None;
+            ui.close_menu();
+        }
+    });
 
     if loc.group_child_idx.is_none() {
         ui.separator();

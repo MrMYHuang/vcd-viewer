@@ -109,7 +109,10 @@ impl SignalWave {
     pub fn push_transition(&mut self, timestamp: u64, value: SignalValue) {
         if let Some(&last_t) = self.timestamps.last() {
             if timestamp == last_t {
-                if let Some(last_v) = self.values.last_mut() {
+                if self.values.len() >= 2 && self.values[self.values.len() - 2] == value {
+                    self.timestamps.pop();
+                    self.values.pop();
+                } else if let Some(last_v) = self.values.last_mut() {
                     *last_v = value;
                 }
                 return;
@@ -369,5 +372,18 @@ mod tests {
         let buckets = wave.query_viewport_lod(0, 10_000, 50, false);
         assert!(buckets.len() <= 50 && !buckets.is_empty());
         assert!(buckets[0].transition_count > 1);
+    }
+
+    #[test]
+    fn test_same_timestamp_glitch_deduplication() {
+        let mut wave = SignalWave::new(1);
+        wave.push_transition(0, SignalValue::Scalar(LogicState::Zero));
+        wave.push_transition(10, SignalValue::Scalar(LogicState::One));
+        // Same timestamp delta-cycle reverts back to Zero:
+        wave.push_transition(10, SignalValue::Scalar(LogicState::Zero));
+        wave.push_transition(20, SignalValue::Scalar(LogicState::One));
+
+        // Transition at 10 reverted to 0 (same as at 0), so next_transition from 0 must be 20
+        assert_eq!(wave.next_transition(0), Some(20));
     }
 }

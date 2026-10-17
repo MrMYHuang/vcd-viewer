@@ -349,7 +349,7 @@ fn draw_analog_trace(
     let stroke = egui::Stroke::new(1.5_f32, base_color);
     let mut prev_pt: Option<egui::Pos2> = None;
 
-    for b in &buckets {
+    for (idx, b) in buckets.iter().enumerate() {
         let Some(a) = signal_value_to_analog(&wave.values[b.last_idx], radix, signedness) else {
             prev_pt = None;
             continue;
@@ -366,7 +366,7 @@ fn draw_analog_trace(
                 painter.line_segment([egui::pos2(x0, p.y), egui::pos2(x0, y)], stroke);
             }
         }
-        if !linear {
+        if !linear || idx + 1 == buckets.len() {
             painter.line_segment([egui::pos2(x0, y), egui::pos2(x1, y)], stroke);
             prev_pt = Some(egui::pos2(x1, y));
         } else {

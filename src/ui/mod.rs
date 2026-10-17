@@ -397,9 +397,15 @@ impl VcdViewerApp {
             return;
         }
 
-        for &id in &needed {
+        for &id in &missing {
             self.loaded_vcd_ids.insert(id);
         }
+
+        let scan_ids = if self.index.is_complete {
+            missing
+        } else {
+            needed
+        };
 
         let src_clone = Arc::clone(source);
         let hdr_clone = Arc::clone(header);
@@ -410,8 +416,13 @@ impl VcdViewerApp {
         {
             std::thread::spawn(move || {
                 let mut scanner =
-                    StreamingBodyScanner::new(src_clone.as_ref(), &hdr_clone, needed, 8 * 1024 * 1024);
-                while let Ok(true) = scanner.step_chunk() {}
+                    StreamingBodyScanner::new(src_clone.as_ref(), &hdr_clone, scan_ids, 8 * 1024 * 1024);
+                while let Ok(true) = scanner.step_chunk() {
+                    let _ = tx.send(WorkerEvent::StatusMessage(format!(
+                        "Indexing VCD: {:.2} MB...",
+                        scanner.index.bytes_indexed as f64 / (1024.0 * 1024.0)
+                    )));
+                }
                 let _ = tx.send(WorkerEvent::WaveBatch {
                     index: scanner.index,
                     waves: scanner.waves,
@@ -421,7 +432,7 @@ impl VcdViewerApp {
         #[cfg(target_arch = "wasm32")]
         {
             let mut scanner =
-                StreamingBodyScanner::new(src_clone.as_ref(), &hdr_clone, needed, 2 * 1024 * 1024);
+                StreamingBodyScanner::new(src_clone.as_ref(), &hdr_clone, scan_ids, 2 * 1024 * 1024);
             while let Ok(true) = scanner.step_chunk() {}
             let _ = tx.send(WorkerEvent::WaveBatch {
                 index: scanner.index,

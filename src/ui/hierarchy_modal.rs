@@ -3,19 +3,28 @@ use crate::ui::VcdViewerApp;
 use crate::vcd_header::{ScopeId, SignalId, VcdHeader};
 use std::sync::Arc;
 
+fn collect_descendant_signals(header: &VcdHeader, scope_id: ScopeId, out: &mut Vec<SignalId>) {
+    if let Some(scope) = header.scopes.get(scope_id.0) {
+        out.extend(scope.signals.iter().copied());
+        for &child in &scope.children {
+            collect_descendant_signals(header, child, out);
+        }
+    }
+}
+
 pub fn filter_scope_signals(header: &VcdHeader, scope_id: ScopeId, query: &str) -> Vec<SignalId> {
     let Some(scope) = header.scopes.get(scope_id.0) else {
         return Vec::new();
     };
     let q = query.trim().to_ascii_lowercase();
-    scope
-        .signals
-        .iter()
-        .copied()
+    if q.is_empty() {
+        return scope.signals.clone();
+    }
+    let mut candidates = Vec::new();
+    collect_descendant_signals(header, scope_id, &mut candidates);
+    candidates
+        .into_iter()
         .filter(|&sid| {
-            if q.is_empty() {
-                return true;
-            }
             let sig = &header.signals[sid.0];
             sig.name.to_ascii_lowercase().contains(&q)
                 || sig.full_path.to_ascii_lowercase().contains(&q)
@@ -188,5 +197,22 @@ mod tests {
         let hdr = parse_vcd_header(&MemByteSource::new(vcd.to_vec())).unwrap();
         let matched = filter_scope_signals(&hdr, hdr.root_scopes[0], "axi");
         assert_eq!(matched.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_signals_searches_descendant_scopes_when_query_non_empty() {
+        let vcd = b"$timescale 1ns $end
+$scope module top_soc $end
+  $scope module u_cpu $end
+    $var wire 1 ! clk $end
+    $var reg 32 \" pc [31:0] $end
+  $upscope $end
+$upscope $end
+$enddefinitions $end";
+        let hdr = parse_vcd_header(&MemByteSource::new(vcd.to_vec())).unwrap();
+        // Root scope top_soc has 0 direct signals, but searching "pc" from root must find top_soc.u_cpu.pc
+        let matched = filter_scope_signals(&hdr, hdr.root_scopes[0], "pc");
+        assert_eq!(matched.len(), 1);
+        assert_eq!(hdr.signals[matched[0].0].full_path, "top_soc.u_cpu.pc");
     }
 }

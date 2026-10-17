@@ -330,6 +330,20 @@ fn normalize_search_token(s: &str) -> String {
         .to_ascii_lowercase()
 }
 
+fn strip_radix_and_leading_zeros(s: &str) -> &str {
+    let body = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0b"))
+        .or_else(|| s.strip_prefix("0o"))
+        .unwrap_or(s);
+    let trimmed = body.trim_start_matches('0');
+    if trimmed.is_empty() {
+        "0"
+    } else {
+        trimmed
+    }
+}
+
 pub fn find_value_transition(
     wave: &SignalWave,
     start_time: u64,
@@ -342,18 +356,22 @@ pub fn find_value_transition(
     if q.is_empty() || wave.timestamps.is_empty() {
         return None;
     }
+    let q_stripped = strip_radix_and_leading_zeros(&q);
 
     let matches_at = |val: &SignalValue| -> bool {
         let formatted = normalize_search_token(&format_signal_value(val, radix, signedness));
-        if formatted == q || formatted.trim_start_matches("0x").trim_start_matches("0b").trim_start_matches("0o") == q {
+        if formatted == q || strip_radix_and_leading_zeros(&formatted) == q_stripped {
             return true;
         }
-        // Also check hex/dec cross-matching
+        // Also check hex/dec cross-matching with leading zeros stripped
         let hex_fmt = normalize_search_token(&format_signal_value(val, Radix::Hex, signedness));
-        if hex_fmt == q {
+        if hex_fmt == q || strip_radix_and_leading_zeros(&hex_fmt) == q_stripped {
             return true;
         }
-        if let (Ok(q_f), Some(v_f)) = (q.parse::<f64>(), signal_value_to_analog(val, radix, signedness)) {
+        if let (Ok(q_f), Some(v_f)) = (
+            q.parse::<f64>(),
+            signal_value_to_analog(val, radix, signedness),
+        ) {
             if (q_f - v_f).abs() <= 1e-5 * q_f.abs().max(1.0) {
                 return true;
             }
@@ -442,6 +460,33 @@ mod tests {
         assert_eq!(
             format_signal_value(&xz_bits, Radix::Float(FloatFormat::Fp32), Signedness::Unsigned),
             "X"
+        );
+    }
+
+    #[test]
+    fn test_find_value_transition_unpadded_hex_and_wildcards() {
+        let mut wave = SignalWave::new(32);
+        wave.push_transition(0, parse_vcd_vector_bytes(b"0", 32));
+        // 0x000000FE at t=20
+        wave.push_transition(20, parse_vcd_vector_bytes(b"11111110", 32));
+        // 0xDEADBEEF at t=40
+        wave.push_transition(
+            40,
+            parse_vcd_vector_bytes(b"11011110101011011011111011101111", 32),
+        );
+
+        // Unpadded "0xfe" or "fe" must match 32-bit 0x000000FE at t=20
+        assert_eq!(
+            find_value_transition(&wave, 0, true, "0xfe", Radix::Hex, Signedness::Unsigned),
+            Some(20)
+        );
+        assert_eq!(
+            find_value_transition(&wave, 0, true, "fe", Radix::Hex, Signedness::Unsigned),
+            Some(20)
+        );
+        assert_eq!(
+            find_value_transition(&wave, 0, true, "0xdead_beef", Radix::Hex, Signedness::Unsigned),
+            Some(40)
         );
     }
 }
