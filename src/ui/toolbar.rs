@@ -8,17 +8,21 @@ pub fn render_top_toolbar(app: &mut VcdViewerApp, ctx: &egui::Context, ui: &mut 
         if ui.button("📂 Load VCD").clicked() {
             app.trigger_open_vcd_dialog();
         }
-        if ui.button("🧪 Demo SoC").on_hover_text("Load built-in demo SoC VCD trace").clicked() {
-            app.load_demo_soc_vcd();
-        }
-        let select_btn = egui::Button::new(
-            egui::RichText::new("➕ Select Signals...")
+        let hier_btn = egui::Button::new(
+            egui::RichText::new("🌳 Signal Hierarchy")
                 .strong()
                 .color(egui::Color32::from_rgb(17, 17, 27)),
         )
         .fill(egui::Color32::from_rgb(137, 180, 250));
-        if ui.add(select_btn).clicked() {
-            app.show_hierarchy_modal = !app.show_hierarchy_modal;
+        if ui
+            .add_enabled(app.header.is_some(), hier_btn)
+            .on_hover_text("Reveal Signal Hierarchy window of loaded VCD (g)")
+            .clicked()
+        {
+            app.reveal_hierarchy_window();
+        }
+        if ui.button("🧪 Demo SoC").on_hover_text("Load built-in demo SoC VCD trace").clicked() {
+            app.load_demo_soc_vcd();
         }
         if ui.button("📋 Load List").clicked() {
             app.trigger_load_signal_list_dialog();
@@ -30,13 +34,25 @@ pub fn render_top_toolbar(app: &mut VcdViewerApp, ctx: &egui::Context, ui: &mut 
         ui.separator();
 
         let max_t = app.index.max_timestamp.max(100) as f64;
-        if ui.button("🔍+ In").on_hover_text("Zoom In (+)").clicked() {
-            app.doc.viewport.zoom_factor(0.65, 0.5, max_t);
+        if ui
+            .button("🔍+ In")
+            .on_hover_text("Zoom In (Shift+Z or +)")
+            .clicked()
+        {
+            app.doc.viewport.zoom_factor(0.5, 0.5, max_t);
         }
-        if ui.button("🔍- Out").on_hover_text("Zoom Out (-)").clicked() {
-            app.doc.viewport.zoom_factor(1.5, 0.5, max_t);
+        if ui
+            .button("🔍- Out")
+            .on_hover_text("Zoom Out (z or -)")
+            .clicked()
+        {
+            app.doc.viewport.zoom_factor(2.0, 0.5, max_t);
         }
-        if ui.button("⛶ Full").on_hover_text("Zoom Full (F)").clicked() {
+        if ui
+            .button("⛶ Full")
+            .on_hover_text("Zoom Full (f)")
+            .clicked()
+        {
             app.doc
                 .viewport
                 .zoom_full(app.index.min_timestamp, app.index.max_timestamp);

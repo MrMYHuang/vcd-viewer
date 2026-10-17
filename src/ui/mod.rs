@@ -490,6 +490,7 @@ impl VcdViewerApp {
                     self.doc = doc;
                     self.selected_locations.clear();
                     self.primary_selected = None;
+                    self.focus_selected = None;
                     self.apply_theme(ctx);
                     self.sync_watched_signals();
                     self.status_message = "Loaded signal list configuration".to_string();
@@ -501,11 +502,74 @@ impl VcdViewerApp {
         }
     }
 
+    pub fn reveal_hierarchy_window(&mut self) {
+        self.show_hierarchy_modal = true;
+        if self.selected_scope.is_none() {
+            self.selected_scope = self
+                .header
+                .as_ref()
+                .and_then(|h| h.root_scopes.first().copied());
+        }
+    }
+
+    pub fn handle_waveform_key_shortcut(
+        &mut self,
+        key: egui::Key,
+        shift: bool,
+        cmd_or_ctrl: bool,
+    ) -> bool {
+        if cmd_or_ctrl {
+            return false;
+        }
+        let max_t = self.index.max_timestamp.max(100) as f64;
+        match key {
+            // Synopsys nWave: 'Z' (Shift+Z) = Zoom In, 'z' (unshifted) = Zoom Out
+            egui::Key::Z => {
+                if shift {
+                    self.doc.viewport.zoom_factor(0.5, 0.5, max_t);
+                } else {
+                    self.doc.viewport.zoom_factor(2.0, 0.5, max_t);
+                }
+                true
+            }
+            egui::Key::Equals | egui::Key::Plus => {
+                self.doc.viewport.zoom_factor(0.5, 0.5, max_t);
+                true
+            }
+            egui::Key::Minus => {
+                self.doc.viewport.zoom_factor(2.0, 0.5, max_t);
+                true
+            }
+            // Synopsys nWave: 'f' = Zoom Full
+            egui::Key::F => {
+                self.doc
+                    .viewport
+                    .zoom_full(self.index.min_timestamp, self.index.max_timestamp);
+                true
+            }
+            // Synopsys nWave: 'g' = Get Signals / Reveal Signal Hierarchy Window
+            egui::Key::G => {
+                self.reveal_hierarchy_window();
+                true
+            }
+            egui::Key::N => {
+                self.jump_next_edge();
+                true
+            }
+            egui::Key::P => {
+                self.jump_prev_edge();
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn select_all_signals(&mut self) {
         self.selected_locations = self.doc.all_signal_locations();
         if self.primary_selected.is_none() {
             self.primary_selected = self.selected_locations.iter().next().copied();
         }
+        self.focus_selected = self.selected_locations.iter().next_back().copied();
         self.status_message = format!("Selected {} signal(s)", self.selected_locations.len());
     }
 
@@ -521,6 +585,7 @@ impl VcdViewerApp {
             self.clipboard_signals = self.doc.cut_locations(&self.selected_locations);
             self.selected_locations.clear();
             self.primary_selected = None;
+            self.focus_selected = None;
             self.status_message = format!("Cut {} signal(s)", self.clipboard_signals.len());
         }
     }
@@ -533,6 +598,7 @@ impl VcdViewerApp {
             let clips = self.clipboard_signals.clone();
             let inserted = self.doc.insert_signals_after(anchor, &clips);
             self.primary_selected = inserted.iter().next().copied();
+            self.focus_selected = inserted.iter().next_back().copied();
             self.selected_locations = inserted;
             self.sync_watched_signals();
             self.status_message = format!("Pasted {} signal(s)", clips.len());
@@ -545,6 +611,7 @@ impl VcdViewerApp {
             self.doc.delete_locations(&self.selected_locations);
             self.selected_locations.clear();
             self.primary_selected = None;
+            self.focus_selected = None;
             self.status_message = format!("Deleted {} signal(s)", count);
         }
     }
@@ -785,25 +852,20 @@ impl eframe::App for VcdViewerApp {
                         i.modifiers.shift,
                         &ordered_locs,
                     );
-                } else if !cmd_or_ctrl {
-                    if i.key_pressed(egui::Key::Equals) || i.key_pressed(egui::Key::Plus) {
-                        let max_t = self.index.max_timestamp.max(100) as f64;
-                        self.doc.viewport.zoom_factor(0.7, 0.5, max_t);
-                    }
-                    if i.key_pressed(egui::Key::Minus) {
-                        let max_t = self.index.max_timestamp.max(100) as f64;
-                        self.doc.viewport.zoom_factor(1.4, 0.5, max_t);
-                    }
-                    if i.key_pressed(egui::Key::F) {
-                        self.doc
-                            .viewport
-                            .zoom_full(self.index.min_timestamp, self.index.max_timestamp);
-                    }
-                    if i.key_pressed(egui::Key::N) {
-                        self.jump_next_edge();
-                    }
-                    if i.key_pressed(egui::Key::P) {
-                        self.jump_prev_edge();
+                } else {
+                    for key in [
+                        egui::Key::Z,
+                        egui::Key::F,
+                        egui::Key::G,
+                        egui::Key::N,
+                        egui::Key::P,
+                        egui::Key::Equals,
+                        egui::Key::Plus,
+                        egui::Key::Minus,
+                    ] {
+                        if i.key_pressed(key) {
+                            self.handle_waveform_key_shortcut(key, i.modifiers.shift, cmd_or_ctrl);
+                        }
                     }
                 }
             });
@@ -869,5 +931,43 @@ impl eframe::App for VcdViewerApp {
             });
 
         hierarchy_modal::render_hierarchy_modal(self, ctx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_nwave_zoom_keys_z_shift_z_and_f() {
+        let mut app = VcdViewerApp::default();
+        app.index.min_timestamp = 0;
+        app.index.max_timestamp = 1000;
+        app.doc.viewport.start_time = 200.0;
+        app.doc.viewport.end_time = 600.0; // span = 400.0
+
+        // 'Z' (Shift + Z) -> Zoom In (span halves from 400 to 200)
+        assert!(app.handle_waveform_key_shortcut(egui::Key::Z, true, false));
+        assert!((app.doc.viewport.span() - 200.0).abs() < 1e-6);
+
+        // 'z' (unshifted z) -> Zoom Out (span doubles from 200 to 400)
+        assert!(app.handle_waveform_key_shortcut(egui::Key::Z, false, false));
+        assert!((app.doc.viewport.span() - 400.0).abs() < 1e-6);
+
+        // 'f' -> Zoom Full ([0, 1000])
+        assert!(app.handle_waveform_key_shortcut(egui::Key::F, false, false));
+        assert!((app.doc.viewport.start_time - 0.0).abs() < 1e-6);
+        assert!((app.doc.viewport.end_time - 1000.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_reveal_hierarchy_window_sets_modal_and_default_scope() {
+        let mut app = VcdViewerApp::default();
+        app.show_hierarchy_modal = false;
+        app.selected_scope = None;
+
+        app.reveal_hierarchy_window();
+        assert!(app.show_hierarchy_modal);
+        assert!(app.selected_scope.is_some());
     }
 }
