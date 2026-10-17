@@ -651,7 +651,9 @@ pub fn render_signal_and_value_panes(
     }
     if let Some(anchor_loc) = action_paste_after {
         let clips = app.clipboard_signals.clone();
-        app.doc.insert_signals_after(Some(anchor_loc), &clips);
+        let inserted = app.doc.insert_signals_after(Some(anchor_loc), &clips);
+        app.primary_selected = inserted.iter().next().copied();
+        app.selected_locations = inserted;
         app.sync_watched_signals();
     }
     if action_group_selected && !app.selected_locations.is_empty() {

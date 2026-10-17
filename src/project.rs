@@ -348,28 +348,45 @@ impl SignalListDocument {
         &mut self,
         anchor: Option<SignalLocation>,
         configs: &[SignalRowConfig],
-    ) {
+    ) -> std::collections::BTreeSet<SignalLocation> {
+        let mut inserted = std::collections::BTreeSet::new();
         if let Some(l) = anchor {
             if let Some(c_idx) = l.group_child_idx {
                 if let Some(DisplayedNode::Group { children, .. }) = self.rows.get_mut(l.node_idx)
                 {
                     let base = (c_idx + 1).min(children.len());
                     for (offset, cfg) in configs.iter().enumerate() {
-                        children.insert(base + offset, cfg.clone());
+                        let idx = base + offset;
+                        children.insert(idx, cfg.clone());
+                        inserted.insert(SignalLocation {
+                            node_idx: l.node_idx,
+                            group_child_idx: Some(idx),
+                        });
                     }
-                    return;
+                    return inserted;
                 }
             }
             let base = (l.node_idx + 1).min(self.rows.len());
             for (offset, cfg) in configs.iter().enumerate() {
+                let idx = base + offset;
                 self.rows
-                    .insert(base + offset, DisplayedNode::Signal(cfg.clone()));
+                    .insert(idx, DisplayedNode::Signal(cfg.clone()));
+                inserted.insert(SignalLocation {
+                    node_idx: idx,
+                    group_child_idx: None,
+                });
             }
         } else {
-            for cfg in configs {
+            let base = self.rows.len();
+            for (offset, cfg) in configs.iter().enumerate() {
                 self.rows.push(DisplayedNode::Signal(cfg.clone()));
+                inserted.insert(SignalLocation {
+                    node_idx: base + offset,
+                    group_child_idx: None,
+                });
             }
         }
+        inserted
     }
 
     pub fn update_signals<F: FnMut(&mut SignalRowConfig)>(
@@ -582,11 +599,14 @@ mod tests {
             "top.g_c"
         );
 
-        // Paste cut items after remaining signal: preserves order
-        doc.insert_signals_after(
+        // Paste cut items after remaining signal: preserves order and returns newly inserted locations
+        let pasted_locs = doc.insert_signals_after(
             Some(SignalLocation { node_idx: 0, group_child_idx: Some(0) }),
             &cut,
         );
+        assert_eq!(pasted_locs.len(), 4);
+        assert!(pasted_locs.contains(&SignalLocation { node_idx: 0, group_child_idx: Some(1) }));
+        assert!(pasted_locs.contains(&SignalLocation { node_idx: 0, group_child_idx: Some(4) }));
         assert_eq!(doc.all_signal_locations().len(), 5);
     }
 }

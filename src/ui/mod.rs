@@ -525,7 +525,9 @@ impl VcdViewerApp {
                 .primary_selected
                 .or_else(|| self.selected_locations.iter().next_back().copied());
             let clips = self.clipboard_signals.clone();
-            self.doc.insert_signals_after(anchor, &clips);
+            let inserted = self.doc.insert_signals_after(anchor, &clips);
+            self.primary_selected = inserted.iter().next().copied();
+            self.selected_locations = inserted;
             self.sync_watched_signals();
             self.status_message = format!("Pasted {} signal(s)", clips.len());
         }
