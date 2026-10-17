@@ -1,7 +1,105 @@
 use crate::project::{DisplayedNode, SignalRowConfig};
 use crate::ui::VcdViewerApp;
 use crate::vcd_header::{ScopeId, SignalId, VcdHeader};
+use std::collections::HashSet;
 use std::sync::Arc;
+
+pub fn apply_hierarchy_click_selection(
+    checked: &mut HashSet<SignalId>,
+    anchor: &mut Option<SignalId>,
+    focus: &mut Option<SignalId>,
+    clicked_id: SignalId,
+    is_checkbox_click: bool,
+    ctrl_or_cmd: bool,
+    shift: bool,
+    visible_sigs: &[SignalId],
+) {
+    if shift {
+        let anc = anchor.unwrap_or(clicked_id);
+        *anchor = Some(anc);
+        *focus = Some(clicked_id);
+        if let (Some(i0), Some(i1)) = (
+            visible_sigs.iter().position(|&s| s == anc),
+            visible_sigs.iter().position(|&s| s == clicked_id),
+        ) {
+            if !is_checkbox_click && !ctrl_or_cmd {
+                checked.clear();
+            }
+            let start = i0.min(i1);
+            let end = i0.max(i1);
+            for &s in &visible_sigs[start..=end] {
+                checked.insert(s);
+            }
+            return;
+        }
+    }
+
+    if is_checkbox_click || ctrl_or_cmd {
+        if checked.contains(&clicked_id) {
+            checked.remove(&clicked_id);
+        } else {
+            checked.insert(clicked_id);
+        }
+        *anchor = Some(clicked_id);
+        *focus = Some(clicked_id);
+    } else {
+        checked.clear();
+        checked.insert(clicked_id);
+        *anchor = Some(clicked_id);
+        *focus = Some(clicked_id);
+    }
+}
+
+pub fn apply_hierarchy_arrow_selection(
+    checked: &mut HashSet<SignalId>,
+    anchor: &mut Option<SignalId>,
+    focus: &mut Option<SignalId>,
+    move_down: bool,
+    shift: bool,
+    visible_sigs: &[SignalId],
+) {
+    if visible_sigs.is_empty() {
+        return;
+    }
+    let cur_sid = focus.or(*anchor);
+    let cur_idx = cur_sid.and_then(|c| visible_sigs.iter().position(|&s| s == c));
+    let next_idx = match cur_idx {
+        Some(idx) => {
+            if move_down {
+                (idx + 1).min(visible_sigs.len() - 1)
+            } else {
+                idx.saturating_sub(1)
+            }
+        }
+        None => {
+            if move_down {
+                0
+            } else {
+                visible_sigs.len() - 1
+            }
+        }
+    };
+    let new_sid = visible_sigs[next_idx];
+    *focus = Some(new_sid);
+
+    if shift {
+        let anc = anchor.unwrap_or(new_sid);
+        *anchor = Some(anc);
+        if let Some(a_idx) = visible_sigs.iter().position(|&s| s == anc) {
+            checked.clear();
+            let start = a_idx.min(next_idx);
+            let end = a_idx.max(next_idx);
+            for &s in &visible_sigs[start..=end] {
+                checked.insert(s);
+            }
+            return;
+        }
+    }
+
+    checked.clear();
+    checked.insert(new_sid);
+    *anchor = Some(new_sid);
+}
 
 fn collect_descendant_signals(header: &VcdHeader, scope_id: ScopeId, out: &mut Vec<SignalId>) {
     if let Some(scope) = header.scopes.get(scope_id.0) {
@@ -76,7 +174,7 @@ pub fn render_hierarchy_modal(app: &mut VcdViewerApp, ctx: &egui::Context) {
 
     egui::Window::new("Signal Hierarchy Browser")
         .open(&mut open)
-        .default_size([680.0, 460.0])
+        .default_size([720.0, 480.0])
         .resizable(true)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
@@ -89,6 +187,12 @@ pub fn render_hierarchy_modal(app: &mut VcdViewerApp, ctx: &egui::Context) {
                 if ui.button("Clear").clicked() {
                     app.hierarchy_search_query.clear();
                 }
+                ui.separator();
+                ui.label(
+                    egui::RichText::new("Tip: Shift+Click or Shift+↑/↓ to select range")
+                        .weak()
+                        .small(),
+                );
             });
             ui.separator();
 
@@ -120,6 +224,36 @@ pub fn render_hierarchy_modal(app: &mut VcdViewerApp, ctx: &egui::Context) {
                     Vec::new()
                 };
 
+                // Keyboard navigation (Up/Down/Shift+Up/Shift+Down and Cmd/Ctrl+A) in hierarchy signal list
+                if !ctx.wants_keyboard_input() {
+                    ctx.input(|i| {
+                        let cmd_or_ctrl = i.modifiers.command || i.modifiers.ctrl;
+                        if cmd_or_ctrl && i.key_pressed(egui::Key::A) {
+                            for &sid in &visible_sigs {
+                                app.checked_signals.insert(sid);
+                            }
+                        } else if i.key_pressed(egui::Key::ArrowDown) {
+                            apply_hierarchy_arrow_selection(
+                                &mut app.checked_signals,
+                                &mut app.hierarchy_anchor_signal,
+                                &mut app.hierarchy_focus_signal,
+                                true,
+                                i.modifiers.shift,
+                                &visible_sigs,
+                            );
+                        } else if i.key_pressed(egui::Key::ArrowUp) {
+                            apply_hierarchy_arrow_selection(
+                                &mut app.checked_signals,
+                                &mut app.hierarchy_anchor_signal,
+                                &mut app.hierarchy_focus_signal,
+                                false,
+                                i.modifiers.shift,
+                                &visible_sigs,
+                            );
+                        }
+                    });
+                }
+
                 cols[1].horizontal(|ui| {
                     ui.heading(format!("Signals ({})", visible_sigs.len()));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -143,9 +277,9 @@ pub fn render_hierarchy_modal(app: &mut VcdViewerApp, ctx: &egui::Context) {
                     .id_salt("scope_signals_scroll")
                     .max_height(340.0)
                     .show(&mut cols[1], |ui| {
-                        for sid in visible_sigs {
+                        for &sid in &visible_sigs {
                             let meta = &header_arc.signals[sid.0];
-                            let mut is_checked = app.checked_signals.contains(&sid);
+                            let is_checked = app.checked_signals.contains(&sid);
                             let range_str = match (meta.msb, meta.lsb) {
                                 (Some(m), Some(l)) if m != l => format!(" [{}:{}]", m, l),
                                 _ if meta.width > 1 => format!(" [{}:0]", meta.width - 1),
@@ -153,12 +287,23 @@ pub fn render_hierarchy_modal(app: &mut VcdViewerApp, ctx: &egui::Context) {
                             };
                             let label = format!("{}{} ({:?})", meta.name, range_str, meta.var_type);
                             ui.horizontal(|ui| {
-                                if ui.checkbox(&mut is_checked, label).changed() {
-                                    if is_checked {
-                                        app.checked_signals.insert(sid);
-                                    } else {
-                                        app.checked_signals.remove(&sid);
-                                    }
+                                let mut box_val = is_checked;
+                                let cb_resp = ui.checkbox(&mut box_val, "");
+                                let lbl_resp = ui.selectable_label(is_checked, label);
+                                if cb_resp.clicked() || lbl_resp.clicked() {
+                                    let (ctrl_or_cmd, shift) = ui.input(|i| {
+                                        (i.modifiers.command || i.modifiers.ctrl, i.modifiers.shift)
+                                    });
+                                    apply_hierarchy_click_selection(
+                                        &mut app.checked_signals,
+                                        &mut app.hierarchy_anchor_signal,
+                                        &mut app.hierarchy_focus_signal,
+                                        sid,
+                                        cb_resp.clicked(),
+                                        ctrl_or_cmd,
+                                        shift,
+                                        &visible_sigs,
+                                    );
                                 }
                                 if ui.small_button("Add").on_hover_text(&meta.full_path).clicked() {
                                     signals_to_add.push(sid);
@@ -214,5 +359,47 @@ $enddefinitions $end";
         let matched = filter_scope_signals(&hdr, hdr.root_scopes[0], "pc");
         assert_eq!(matched.len(), 1);
         assert_eq!(hdr.signals[matched[0].0].full_path, "top_soc.u_cpu.pc");
+    }
+
+    #[test]
+    fn test_hierarchy_shift_click_and_shift_arrow_range_selection() {
+        use std::collections::HashSet;
+        let visible = vec![SignalId(0), SignalId(1), SignalId(2), SignalId(3), SignalId(4)];
+        let mut checked = HashSet::new();
+        let mut anchor = None;
+        let mut focus = None;
+
+        // Click checkbox on SignalId(1) -> checks {1}, anchor=1
+        apply_hierarchy_click_selection(
+            &mut checked,
+            &mut anchor,
+            &mut focus,
+            SignalId(1),
+            true,
+            false,
+            false,
+            &visible,
+        );
+        assert_eq!(checked, HashSet::from([SignalId(1)]));
+
+        // Shift+Click on SignalId(3) -> checks contiguous range {1, 2, 3}
+        apply_hierarchy_click_selection(
+            &mut checked,
+            &mut anchor,
+            &mut focus,
+            SignalId(3),
+            true,
+            false,
+            true,
+            &visible,
+        );
+        assert_eq!(checked, HashSet::from([SignalId(1), SignalId(2), SignalId(3)]));
+
+        // Shift+Down arrow -> extends range from anchor(1) to focus(4): {1, 2, 3, 4}
+        apply_hierarchy_arrow_selection(&mut checked, &mut anchor, &mut focus, true, true, &visible);
+        assert_eq!(
+            checked,
+            HashSet::from([SignalId(1), SignalId(2), SignalId(3), SignalId(4)])
+        );
     }
 }

@@ -17,27 +17,29 @@ const PRESET_COLORS: [(&str, [u8; 3]); 7] = [
 pub fn apply_row_click_selection(
     selected: &mut BTreeSet<SignalLocation>,
     primary: &mut Option<SignalLocation>,
+    focus: &mut Option<SignalLocation>,
     clicked_loc: SignalLocation,
     ctrl_or_cmd: bool,
     shift: bool,
     ordered_visible_locs: &[SignalLocation],
 ) {
     if shift {
-        if let Some(anchor) = *primary {
-            if let (Some(i0), Some(i1)) = (
-                ordered_visible_locs.iter().position(|&l| l == anchor),
-                ordered_visible_locs.iter().position(|&l| l == clicked_loc),
-            ) {
-                if !ctrl_or_cmd {
-                    selected.clear();
-                }
-                let start = i0.min(i1);
-                let end = i0.max(i1);
-                for &loc in &ordered_visible_locs[start..=end] {
-                    selected.insert(loc);
-                }
-                return;
+        let anchor = primary.unwrap_or(clicked_loc);
+        *primary = Some(anchor);
+        *focus = Some(clicked_loc);
+        if let (Some(i0), Some(i1)) = (
+            ordered_visible_locs.iter().position(|&l| l == anchor),
+            ordered_visible_locs.iter().position(|&l| l == clicked_loc),
+        ) {
+            if !ctrl_or_cmd {
+                selected.clear();
             }
+            let start = i0.min(i1);
+            let end = i0.max(i1);
+            for &loc in &ordered_visible_locs[start..=end] {
+                selected.insert(loc);
+            }
+            return;
         }
     }
     if ctrl_or_cmd {
@@ -46,15 +48,71 @@ pub fn apply_row_click_selection(
             if *primary == Some(clicked_loc) {
                 *primary = selected.iter().next().copied();
             }
+            if *focus == Some(clicked_loc) {
+                *focus = *primary;
+            }
         } else {
             selected.insert(clicked_loc);
             *primary = Some(clicked_loc);
+            *focus = Some(clicked_loc);
         }
     } else {
         selected.clear();
         selected.insert(clicked_loc);
         *primary = Some(clicked_loc);
+        *focus = Some(clicked_loc);
     }
+}
+
+pub fn apply_arrow_key_selection(
+    selected: &mut BTreeSet<SignalLocation>,
+    primary: &mut Option<SignalLocation>,
+    focus: &mut Option<SignalLocation>,
+    move_down: bool,
+    shift: bool,
+    ordered_visible_locs: &[SignalLocation],
+) {
+    if ordered_visible_locs.is_empty() {
+        return;
+    }
+    let cur_loc = focus.or(*primary);
+    let cur_idx = cur_loc.and_then(|c| ordered_visible_locs.iter().position(|&l| l == c));
+    let next_idx = match cur_idx {
+        Some(idx) => {
+            if move_down {
+                (idx + 1).min(ordered_visible_locs.len() - 1)
+            } else {
+                idx.saturating_sub(1)
+            }
+        }
+        None => {
+            if move_down {
+                0
+            } else {
+                ordered_visible_locs.len() - 1
+            }
+        }
+    };
+    let new_loc = ordered_visible_locs[next_idx];
+    *focus = Some(new_loc);
+
+    if shift {
+        let anchor = primary.unwrap_or(new_loc);
+        *primary = Some(anchor);
+        if let Some(a_idx) = ordered_visible_locs.iter().position(|&l| l == anchor) {
+            selected.clear();
+            let start = a_idx.min(next_idx);
+            let end = a_idx.max(next_idx);
+            for &loc in &ordered_visible_locs[start..=end] {
+                selected.insert(loc);
+            }
+            return;
+        }
+    }
+
+    selected.clear();
+    selected.insert(new_loc);
+    *primary = Some(new_loc);
 }
 
 pub fn resolve_context_menu_targets(
@@ -268,6 +326,7 @@ pub fn render_signal_and_value_panes(
                             apply_row_click_selection(
                                 &mut app.selected_locations,
                                 &mut app.primary_selected,
+                                &mut app.focus_selected,
                                 *loc,
                                 ctrl_or_cmd,
                                 shift,
@@ -709,12 +768,13 @@ mod tests {
         let mut primary = None;
 
         // 1. Plain click on index 0 selects only {0}
-        apply_row_click_selection(&mut selected, &mut primary, locs[0], false, false, &locs);
+        let mut focus = None;
+        apply_row_click_selection(&mut selected, &mut primary, &mut focus, locs[0], false, false, &locs);
         assert_eq!(selected.len(), 1);
         assert!(selected.contains(&locs[0]));
 
         // 2. Ctrl+Click on index 2 adds {2} -> {0, 2}
-        apply_row_click_selection(&mut selected, &mut primary, locs[2], true, false, &locs);
+        apply_row_click_selection(&mut selected, &mut primary, &mut focus, locs[2], true, false, &locs);
         assert_eq!(selected.len(), 2);
         assert!(selected.contains(&locs[0]) && selected.contains(&locs[2]));
 
@@ -728,8 +788,35 @@ mod tests {
         assert!(targets2.contains(&locs[3]));
 
         // 5. Shift+Click from primary (3) to index 1 selects {1, 2, 3}
-        apply_row_click_selection(&mut selected, &mut primary, locs[1], false, true, &locs);
+        apply_row_click_selection(&mut selected, &mut primary, &mut focus, locs[1], false, true, &locs);
         assert_eq!(selected.len(), 3);
         assert!(selected.contains(&locs[1]) && selected.contains(&locs[2]) && selected.contains(&locs[3]));
+    }
+
+    #[test]
+    fn test_shift_arrow_and_shift_click_range_selection() {
+        let locs = vec![
+            SignalLocation { node_idx: 0, group_child_idx: None },
+            SignalLocation { node_idx: 1, group_child_idx: None },
+            SignalLocation { node_idx: 2, group_child_idx: None },
+            SignalLocation { node_idx: 3, group_child_idx: None },
+        ];
+        let mut selected = BTreeSet::new();
+        let mut primary = None;
+        let mut focus = None;
+
+        // Click index 1 -> anchor=1, focus=1, selected={1}
+        apply_row_click_selection(&mut selected, &mut primary, &mut focus, locs[1], false, false, &locs);
+        assert_eq!(selected, BTreeSet::from([locs[1]]));
+
+        // Shift+Down twice -> range {1, 2, 3}
+        apply_arrow_key_selection(&mut selected, &mut primary, &mut focus, true, true, &locs);
+        assert_eq!(selected, BTreeSet::from([locs[1], locs[2]]));
+        apply_arrow_key_selection(&mut selected, &mut primary, &mut focus, true, true, &locs);
+        assert_eq!(selected, BTreeSet::from([locs[1], locs[2], locs[3]]));
+
+        // Shift+Up once -> shrinks back to {1, 2} because anchor stays at 1
+        apply_arrow_key_selection(&mut selected, &mut primary, &mut focus, false, true, &locs);
+        assert_eq!(selected, BTreeSet::from([locs[1], locs[2]]));
     }
 }

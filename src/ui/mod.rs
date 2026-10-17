@@ -46,11 +46,14 @@ pub struct VcdViewerApp {
     // UI selection and modal state
     pub selected_locations: BTreeSet<SignalLocation>,
     pub primary_selected: Option<SignalLocation>,
+    pub focus_selected: Option<SignalLocation>,
     pub clipboard_signals: Vec<SignalRowConfig>,
     pub show_hierarchy_modal: bool,
     pub selected_scope: Option<ScopeId>,
     pub hierarchy_search_query: String,
     pub checked_signals: HashSet<SignalId>,
+    pub hierarchy_anchor_signal: Option<SignalId>,
+    pub hierarchy_focus_signal: Option<SignalId>,
 
     // Toolbar search & marker state
     pub value_search_query: String,
@@ -84,11 +87,14 @@ impl Default for VcdViewerApp {
             doc: SignalListDocument::default(),
             selected_locations: BTreeSet::new(),
             primary_selected: None,
+            focus_selected: None,
             clipboard_signals: Vec::new(),
             show_hierarchy_modal: false,
             selected_scope: None,
             hierarchy_search_query: String::new(),
             checked_signals: HashSet::new(),
+            hierarchy_anchor_signal: None,
+            hierarchy_focus_signal: None,
             value_search_query: String::new(),
             active_marker_idx: 0,
             status_message: "Ready — Load a VCD file or click 'Demo SoC' to explore".to_string(),
@@ -733,6 +739,7 @@ impl VcdViewerApp {
         self.selected_locations.clear();
         self.selected_locations.insert(initial_loc);
         self.primary_selected = Some(initial_loc);
+        self.focus_selected = Some(initial_loc);
         self.load_vcd_from_source("demo_soc.vcd".to_string(), src);
     }
 }
@@ -759,6 +766,25 @@ impl eframe::App for VcdViewerApp {
                     self.paste_clipboard_signals();
                 } else if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
                     self.delete_selected_signals();
+                } else if i.key_pressed(egui::Key::ArrowDown) || i.key_pressed(egui::Key::ArrowUp) {
+                    let ordered_locs: Vec<SignalLocation> = self
+                        .doc
+                        .flatten_visible_rows(self.header.as_deref())
+                        .into_iter()
+                        .filter_map(|r| match r {
+                            crate::project::VisibleRow::Signal { loc, .. } => Some(loc),
+                            _ => None,
+                        })
+                        .collect();
+                    let move_down = i.key_pressed(egui::Key::ArrowDown);
+                    signal_list::apply_arrow_key_selection(
+                        &mut self.selected_locations,
+                        &mut self.primary_selected,
+                        &mut self.focus_selected,
+                        move_down,
+                        i.modifiers.shift,
+                        &ordered_locs,
+                    );
                 } else if !cmd_or_ctrl {
                     if i.key_pressed(egui::Key::Equals) || i.key_pressed(egui::Key::Plus) {
                         let max_t = self.index.max_timestamp.max(100) as f64;
