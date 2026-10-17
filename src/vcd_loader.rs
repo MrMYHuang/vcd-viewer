@@ -251,4 +251,33 @@ b10100101 \"
         assert!(!scanner.waves.contains_key(&ignored_vcd_id));
         assert_eq!(scanner.waves[&clk_vcd_id].timestamps, vec![0, 10, 20]);
     }
+
+    #[test]
+    fn test_load_verilator_example_adder_vcd() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("example/adder.vcd");
+        let src = crate::byte_source::FileByteSource::open(&path).unwrap();
+        let hdr = parse_vcd_header(&src).unwrap();
+
+        let sum_id = hdr.path_to_signal["tb_adder.sum_o"];
+        let dut_sum_id = hdr.path_to_signal["tb_adder.u_dut.sum_o"];
+        let sum_vcd_id = hdr.signals[sum_id.0].vcd_id;
+        assert_eq!(sum_vcd_id, hdr.signals[dut_sum_id.0].vcd_id);
+
+        let watched: HashSet<_> = [sum_vcd_id].into_iter().collect();
+        let mut scanner = StreamingBodyScanner::new(&src, &hdr, watched, 4096);
+        while scanner.step_chunk().unwrap() {}
+
+        assert_eq!(scanner.index.max_timestamp, 205_000);
+        let sum_wave = &scanner.waves[&sum_vcd_id];
+        // At 25ns (25000ps): 15 + 27 = 42
+        let (_, val_at_25ns) = sum_wave.value_at(25_000).unwrap();
+        assert_eq!(
+            crate::format::format_signal_value(
+                val_at_25ns,
+                crate::format::Radix::Dec,
+                crate::format::Signedness::Signed2s
+            ),
+            "42"
+        );
+    }
 }

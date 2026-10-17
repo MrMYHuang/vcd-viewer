@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "theme": "Dark",
+  "display_unit": "Ns",
+  "cursor_time": 35000,
+  "markers": [
+    {
+      "name": "M1",
+      "timestamp": 65000
+    }
+  ],
+  "viewport": {
+    "start_time": 0.0,
+    "end_time": 205000.0
+  },
+  "rows": [
+    {
+      "Group": {
+        "name": "Clock & Reset",
+        "collapsed": false,
+        "children": [
+          {
+            "signal_path": "tb_adder.clk",
+            "alias": null,
+            "radix": "Bin",
+            "signedness": "Unsigned",
+            "render_style": "Digital",
+            "color_rgb": [166, 227, 161],
+            "expand_bits": false
+          },
+          {
+            "signal_path": "tb_adder.rst_n",
+            "alias": null,
+            "radix": "Bin",
+            "signedness": "Unsigned",
+            "render_style": "Digital",
+            "color_rgb": [166, 227, 161],
+            "expand_bits": false
+          }
+        ]
+      }
+    },
+    {
+      "Divider": {
+        "label": "Adder Inputs & Outputs"
+      }
+    },
+    {
+      "Signal": {
+        "signal_path": "tb_adder.valid_i",
+        "alias": null,
+        "radix": "Bin",
+        "signedness": "Unsigned",
+        "render_style": "Digital",
+        "color_rgb": [148, 226, 213],
+        "expand_bits": false
+      }
+    },
+    {
+      "Signal": {
+        "signal_path": "tb_adder.a_i",
+        "alias": null,
+        "radix": "Dec",
+        "signedness": "Signed2s",
+        "render_style": "Digital",
+        "color_rgb": [137, 180, 250],
+        "expand_bits": false
+      }
+    },
+    {
+      "Signal": {
+        "signal_path": "tb_adder.b_i",
+        "alias": null,
+        "radix": "Dec",
+        "signedness": "Signed2s",
+        "render_style": "Digital",
+        "color_rgb": [137, 180, 250],
+        "expand_bits": false
+      }
+    },
+    {
+      "Signal": {
+        "signal_path": "tb_adder.cin_i",
+        "alias": null,
+        "radix": "Bin",
+        "signedness": "Unsigned",
+        "render_style": "Digital",
+        "color_rgb": [166, 227, 161],
+        "expand_bits": false
+      }
+    },
+    {
+      "Signal": {
+        "signal_path": "tb_adder.valid_o",
+        "alias": null,
+        "radix": "Bin",
+        "signedness": "Unsigned",
+        "render_style": "Digital",
+        "color_rgb": [148, 226, 213],
+        "expand_bits": false
+      }
+    },
+    {
+      "Signal": {
+        "signal_path": "tb_adder.sum_o",
+        "alias": null,
+        "radix": "Dec",
+        "signedness": "Signed2s",
+        "render_style": "Digital",
+        "color_rgb": [249, 226, 175],
+        "expand_bits": false
+      }
+    },
+    {
+      "Signal": {
+        "signal_path": "tb_adder.cout_o",
+        "alias": null,
+        "radix": "Bin",
+        "signedness": "Unsigned",
+        "render_style": "Digital",
+        "color_rgb": [243, 139, 168],
+        "expand_bits": false
+      }
+    },
+    {
+      "Signal": {
+        "signal_path": "tb_adder.fp32_probe",
+        "alias": "fp32_probe (IEEE 754)",
+        "radix": {
+          "Float": "Fp32"
+        },
+        "signedness": "Unsigned",
+        "render_style": "Digital",
+        "color_rgb": [203, 166, 247],
+        "expand_bits": false
+      }
+    }
+  ]
+}

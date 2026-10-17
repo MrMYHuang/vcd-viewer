@@ -2,3 +2,4 @@
 /.superpowers
 /dist
 .DS_Store
+/example/obj_dir
