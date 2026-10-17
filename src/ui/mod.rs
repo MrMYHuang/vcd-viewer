@@ -14,7 +14,7 @@ use crate::project::{
 use crate::vcd_header::{parse_vcd_header, ScopeId, SignalId, TimeUnit, Timescale, VcdHeader, VcdIdCode};
 use crate::vcd_loader::{StreamingBodyScanner, VcdIndex};
 use crate::waveform_db::SignalWave;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -44,8 +44,9 @@ pub struct VcdViewerApp {
     pub doc: SignalListDocument,
 
     // UI selection and modal state
-    pub selected_location: Option<SignalLocation>,
-    pub clipboard_signal: Option<SignalRowConfig>,
+    pub selected_locations: BTreeSet<SignalLocation>,
+    pub primary_selected: Option<SignalLocation>,
+    pub clipboard_signals: Vec<SignalRowConfig>,
     pub show_hierarchy_modal: bool,
     pub selected_scope: Option<ScopeId>,
     pub hierarchy_search_query: String,
@@ -81,8 +82,9 @@ impl Default for VcdViewerApp {
             loaded_vcd_ids: HashSet::new(),
             index: VcdIndex::default(),
             doc: SignalListDocument::default(),
-            selected_location: None,
-            clipboard_signal: None,
+            selected_locations: BTreeSet::new(),
+            primary_selected: None,
+            clipboard_signals: Vec::new(),
             show_hierarchy_modal: false,
             selected_scope: None,
             hierarchy_search_query: String::new(),
@@ -480,6 +482,8 @@ impl VcdViewerApp {
                 }
                 WorkerEvent::SignalListLoaded(doc) => {
                     self.doc = doc;
+                    self.selected_locations.clear();
+                    self.primary_selected = None;
                     self.apply_theme(ctx);
                     self.sync_watched_signals();
                     self.status_message = "Loaded signal list configuration".to_string();
@@ -491,8 +495,56 @@ impl VcdViewerApp {
         }
     }
 
+    pub fn select_all_signals(&mut self) {
+        self.selected_locations = self.doc.all_signal_locations();
+        if self.primary_selected.is_none() {
+            self.primary_selected = self.selected_locations.iter().next().copied();
+        }
+        self.status_message = format!("Selected {} signal(s)", self.selected_locations.len());
+    }
+
+    pub fn copy_selected_signals(&mut self) {
+        if !self.selected_locations.is_empty() {
+            self.clipboard_signals = self.doc.copy_locations(&self.selected_locations);
+            self.status_message = format!("Copied {} signal(s)", self.clipboard_signals.len());
+        }
+    }
+
+    pub fn cut_selected_signals(&mut self) {
+        if !self.selected_locations.is_empty() {
+            self.clipboard_signals = self.doc.cut_locations(&self.selected_locations);
+            self.selected_locations.clear();
+            self.primary_selected = None;
+            self.status_message = format!("Cut {} signal(s)", self.clipboard_signals.len());
+        }
+    }
+
+    pub fn paste_clipboard_signals(&mut self) {
+        if !self.clipboard_signals.is_empty() {
+            let anchor = self
+                .primary_selected
+                .or_else(|| self.selected_locations.iter().next_back().copied());
+            let clips = self.clipboard_signals.clone();
+            self.doc.insert_signals_after(anchor, &clips);
+            self.sync_watched_signals();
+            self.status_message = format!("Pasted {} signal(s)", clips.len());
+        }
+    }
+
+    pub fn delete_selected_signals(&mut self) {
+        if !self.selected_locations.is_empty() {
+            let count = self.selected_locations.len();
+            self.doc.delete_locations(&self.selected_locations);
+            self.selected_locations.clear();
+            self.primary_selected = None;
+            self.status_message = format!("Deleted {} signal(s)", count);
+        }
+    }
+
     pub fn selected_signal_wave(&self) -> Option<(&SignalRowConfig, &SignalWave)> {
-        let loc = self.selected_location?;
+        let loc = self
+            .primary_selected
+            .or_else(|| self.selected_locations.iter().next().copied())?;
         let cfg = self.doc.get_signal(loc)?;
         let hdr = self.header.as_ref()?;
         let &sid = hdr.path_to_signal.get(&cfg.signal_path)?;
@@ -672,10 +724,13 @@ impl VcdViewerApp {
                 }),
             ],
         };
-        self.selected_location = Some(SignalLocation {
+        let initial_loc = SignalLocation {
             node_idx: 2,
             group_child_idx: None,
-        });
+        };
+        self.selected_locations.clear();
+        self.selected_locations.insert(initial_loc);
+        self.primary_selected = Some(initial_loc);
         self.load_vcd_from_source("demo_soc.vcd".to_string(), src);
     }
 }
@@ -684,31 +739,43 @@ impl eframe::App for VcdViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_worker_events(ctx);
 
-        // Keyboard shortcuts
-        if !ctx.wants_keyboard_input() {
+        // Keyboard shortcuts (disabled when typing in a text field or hierarchy modal is open)
+        if !ctx.wants_keyboard_input() && !self.show_hierarchy_modal {
             ctx.input(|i| {
-                if i.key_pressed(egui::Key::Equals) || i.key_pressed(egui::Key::Plus) {
-                    let max_t = self.index.max_timestamp.max(100) as f64;
-                    self.doc.viewport.zoom_factor(0.7, 0.5, max_t);
-                }
-                if i.key_pressed(egui::Key::Minus) {
-                    let max_t = self.index.max_timestamp.max(100) as f64;
-                    self.doc.viewport.zoom_factor(1.4, 0.5, max_t);
-                }
-                if i.key_pressed(egui::Key::F) {
-                    self.doc
-                        .viewport
-                        .zoom_full(self.index.min_timestamp, self.index.max_timestamp);
-                }
-                if i.key_pressed(egui::Key::N) {
-                    self.jump_next_edge();
-                }
-                if i.key_pressed(egui::Key::P) {
-                    self.jump_prev_edge();
-                }
-                if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
-                    if let Some(loc) = self.selected_location.take() {
-                        self.doc.delete_location(loc);
+                let cmd_or_ctrl = i.modifiers.command || i.modifiers.ctrl;
+                let has_cut = i.events.iter().any(|e| matches!(e, egui::Event::Cut));
+                let has_copy = i.events.iter().any(|e| matches!(e, egui::Event::Copy));
+                let has_paste = i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)));
+
+                if cmd_or_ctrl && i.key_pressed(egui::Key::A) {
+                    self.select_all_signals();
+                } else if has_cut || (cmd_or_ctrl && i.key_pressed(egui::Key::X)) {
+                    self.cut_selected_signals();
+                } else if has_copy || (cmd_or_ctrl && i.key_pressed(egui::Key::C)) {
+                    self.copy_selected_signals();
+                } else if has_paste || (cmd_or_ctrl && i.key_pressed(egui::Key::V)) {
+                    self.paste_clipboard_signals();
+                } else if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
+                    self.delete_selected_signals();
+                } else if !cmd_or_ctrl {
+                    if i.key_pressed(egui::Key::Equals) || i.key_pressed(egui::Key::Plus) {
+                        let max_t = self.index.max_timestamp.max(100) as f64;
+                        self.doc.viewport.zoom_factor(0.7, 0.5, max_t);
+                    }
+                    if i.key_pressed(egui::Key::Minus) {
+                        let max_t = self.index.max_timestamp.max(100) as f64;
+                        self.doc.viewport.zoom_factor(1.4, 0.5, max_t);
+                    }
+                    if i.key_pressed(egui::Key::F) {
+                        self.doc
+                            .viewport
+                            .zoom_full(self.index.min_timestamp, self.index.max_timestamp);
+                    }
+                    if i.key_pressed(egui::Key::N) {
+                        self.jump_next_edge();
+                    }
+                    if i.key_pressed(egui::Key::P) {
+                        self.jump_prev_edge();
                     }
                 }
             });

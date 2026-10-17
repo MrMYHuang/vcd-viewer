@@ -445,7 +445,7 @@ pub fn render_waveform_canvas(
                 width,
                 ..
             } => {
-                if app.selected_location == Some(*loc) {
+                if app.selected_locations.contains(loc) {
                     painter.rect_filled(
                         row_rect,
                         0.0,
