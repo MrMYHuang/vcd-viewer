@@ -22,7 +22,7 @@ pub fn apply_hierarchy_click_selection(
             visible_sigs.iter().position(|&s| s == anc),
             visible_sigs.iter().position(|&s| s == clicked_id),
         ) {
-            if !is_checkbox_click && !ctrl_or_cmd {
+            if !ctrl_or_cmd {
                 checked.clear();
             }
             let start = i0.min(i1);
@@ -267,6 +267,8 @@ pub fn render_hierarchy_modal(app: &mut VcdViewerApp, ctx: &egui::Context) {
                             let mut sorted: Vec<SignalId> =
                                 app.checked_signals.drain().collect();
                             sorted.sort_by_key(|s| s.0);
+                            app.hierarchy_anchor_signal = None;
+                            app.hierarchy_focus_signal = None;
                             signals_to_add.extend(sorted);
                         }
                     });
@@ -401,5 +403,18 @@ $enddefinitions $end";
             checked,
             HashSet::from([SignalId(1), SignalId(2), SignalId(3), SignalId(4)])
         );
+
+        // Second Shift+Click on checkbox SignalId(2) -> recomputes range from anchor(1) to 2: {1, 2}
+        apply_hierarchy_click_selection(
+            &mut checked,
+            &mut anchor,
+            &mut focus,
+            SignalId(2),
+            true,
+            false,
+            true,
+            &visible,
+        );
+        assert_eq!(checked, HashSet::from([SignalId(1), SignalId(2)]));
     }
 }

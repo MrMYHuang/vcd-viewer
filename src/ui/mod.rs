@@ -165,6 +165,9 @@ impl VcdViewerApp {
                 self.source = Some(source);
                 self.waves.clear();
                 self.loaded_vcd_ids.clear();
+                self.checked_signals.clear();
+                self.hierarchy_anchor_signal = None;
+                self.hierarchy_focus_signal = None;
                 self.index = VcdIndex::default();
                 self.status_message = format!("Loaded VCD header: {}", self.file_name);
                 self.sync_watched_signals();
@@ -463,6 +466,9 @@ impl VcdViewerApp {
                     self.source = Some(source);
                     self.waves.clear();
                     self.loaded_vcd_ids.clear();
+                    self.checked_signals.clear();
+                    self.hierarchy_anchor_signal = None;
+                    self.hierarchy_focus_signal = None;
                     self.index = VcdIndex::default();
                     self.show_hierarchy_modal = true;
                     self.sync_watched_signals();
@@ -969,5 +975,14 @@ mod tests {
         app.reveal_hierarchy_window();
         assert!(app.show_hierarchy_modal);
         assert!(app.selected_scope.is_some());
+
+        // Loading a new VCD must clear stale hierarchy checked/anchor/focus signals
+        app.checked_signals.insert(SignalId(99));
+        app.hierarchy_anchor_signal = Some(SignalId(99));
+        app.hierarchy_focus_signal = Some(SignalId(99));
+        app.load_demo_soc_vcd();
+        assert!(app.checked_signals.is_empty());
+        assert!(app.hierarchy_anchor_signal.is_none());
+        assert!(app.hierarchy_focus_signal.is_none());
     }
 }

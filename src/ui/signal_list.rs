@@ -153,6 +153,7 @@ pub fn render_header_columns(app: &mut VcdViewerApp, ui: &mut egui::Ui, header_h
                         let cut = app.doc.cut_locations(&app.selected_locations);
                         app.selected_locations.clear();
                         app.primary_selected = None;
+                        app.focus_selected = None;
                         cut
                     } else {
                         Vec::new()
@@ -697,6 +698,7 @@ pub fn render_signal_and_value_panes(
                 })
                 .collect();
             app.primary_selected = app.selected_locations.iter().next().copied();
+            app.focus_selected = app.selected_locations.iter().next_back().copied();
         }
     }
     if action_copy_selected {
@@ -712,6 +714,7 @@ pub fn render_signal_and_value_panes(
         let clips = app.clipboard_signals.clone();
         let inserted = app.doc.insert_signals_after(Some(anchor_loc), &clips);
         app.primary_selected = inserted.iter().next().copied();
+        app.focus_selected = inserted.iter().next_back().copied();
         app.selected_locations = inserted;
         app.sync_watched_signals();
     }
@@ -719,6 +722,7 @@ pub fn render_signal_and_value_panes(
         let children = app.doc.cut_locations(&app.selected_locations);
         app.selected_locations.clear();
         app.primary_selected = None;
+        app.focus_selected = None;
         app.doc.rows.push(DisplayedNode::Group {
             name: format!("Group {}", app.doc.rows.len() + 1),
             collapsed: false,
@@ -735,6 +739,7 @@ pub fn render_signal_and_value_panes(
             app.selected_locations.clear();
             app.selected_locations.insert(new_loc);
             app.primary_selected = Some(new_loc);
+            app.focus_selected = Some(new_loc);
         }
     }
     if let Some(idx) = action_move_down {
@@ -747,6 +752,7 @@ pub fn render_signal_and_value_panes(
             app.selected_locations.clear();
             app.selected_locations.insert(new_loc);
             app.primary_selected = Some(new_loc);
+            app.focus_selected = Some(new_loc);
         }
     }
 }
