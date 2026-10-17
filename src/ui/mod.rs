@@ -1,7 +1,11 @@
 pub mod hierarchy_modal;
+pub mod signal_list;
 pub mod toolbar;
+pub mod waveform_canvas;
 
-use crate::byte_source::{FileByteSource, MemByteSource, VcdByteSource};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::byte_source::FileByteSource;
+use crate::byte_source::{MemByteSource, VcdByteSource};
 use crate::format::{find_value_transition, FloatFormat, Radix, Signedness};
 use crate::project::{
     DisplayedNode, Marker, RenderStyle, SignalListDocument, SignalLocation, SignalRowConfig,
@@ -11,6 +15,7 @@ use crate::vcd_header::{parse_vcd_header, ScopeId, SignalId, TimeUnit, Timescale
 use crate::vcd_loader::{StreamingBodyScanner, VcdIndex};
 use crate::waveform_db::SignalWave;
 use std::collections::{HashMap, HashSet};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
@@ -717,12 +722,45 @@ impl eframe::App for VcdViewerApp {
                 });
             });
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.label(format!(
-                "Active signals: {} (Waveform canvas & signal list in Task 8)",
-                self.doc.rows.len()
-            ));
-        });
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(ctx.style().visuals.panel_fill))
+            .show(ctx, |ui| {
+                let visible_rows = self.doc.flatten_visible_rows(self.header.as_deref());
+                let header_h = 28.0;
+                let row_h = 26.0;
+
+                // Top column headers + Time Ruler
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 0.0;
+                    signal_list::render_header_columns(self, ui, header_h);
+                    ui.separator();
+                    waveform_canvas::render_time_ruler(self, ui, header_h);
+                });
+                ui.separator();
+
+                // Synchronized vertical scroll area for Signal List + Value Column + Waveform Canvas
+                egui::ScrollArea::vertical()
+                    .id_salt("main_waveform_scroll")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.horizontal_top(|ui| {
+                            ui.spacing_mut().item_spacing.x = 0.0;
+                            signal_list::render_signal_and_value_panes(
+                                self,
+                                ui,
+                                &visible_rows,
+                                row_h,
+                            );
+                            ui.separator();
+                            waveform_canvas::render_waveform_canvas(
+                                self,
+                                ui,
+                                &visible_rows,
+                                row_h,
+                            );
+                        });
+                    });
+            });
 
         hierarchy_modal::render_hierarchy_modal(self, ctx);
     }
