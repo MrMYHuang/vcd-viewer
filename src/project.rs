@@ -88,7 +88,7 @@ impl DisplayedNode {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SignalLocation {
     pub node_idx: usize,
     pub group_child_idx: Option<usize>,
@@ -267,6 +267,30 @@ impl SignalListDocument {
         }
     }
 
+    pub fn all_signal_locations(&self) -> std::collections::BTreeSet<SignalLocation> {
+        let mut set = std::collections::BTreeSet::new();
+        for (node_idx, node) in self.rows.iter().enumerate() {
+            match node {
+                DisplayedNode::Signal(_) => {
+                    set.insert(SignalLocation {
+                        node_idx,
+                        group_child_idx: None,
+                    });
+                }
+                DisplayedNode::Group { children, .. } => {
+                    for c_idx in 0..children.len() {
+                        set.insert(SignalLocation {
+                            node_idx,
+                            group_child_idx: Some(c_idx),
+                        });
+                    }
+                }
+                DisplayedNode::Divider { .. } => {}
+            }
+        }
+        set
+    }
+
     pub fn delete_location(&mut self, loc: SignalLocation) {
         if let Some(c_idx) = loc.group_child_idx {
             if let Some(DisplayedNode::Group { children, .. }) = self.rows.get_mut(loc.node_idx) {
@@ -277,6 +301,30 @@ impl SignalListDocument {
         } else if loc.node_idx < self.rows.len() {
             self.rows.remove(loc.node_idx);
         }
+    }
+
+    pub fn delete_locations(&mut self, locs: &std::collections::BTreeSet<SignalLocation>) {
+        for &loc in locs.iter().rev() {
+            self.delete_location(loc);
+        }
+    }
+
+    pub fn copy_locations(
+        &self,
+        locs: &std::collections::BTreeSet<SignalLocation>,
+    ) -> Vec<SignalRowConfig> {
+        locs.iter()
+            .filter_map(|&loc| self.get_signal(loc).cloned())
+            .collect()
+    }
+
+    pub fn cut_locations(
+        &mut self,
+        locs: &std::collections::BTreeSet<SignalLocation>,
+    ) -> Vec<SignalRowConfig> {
+        let copied = self.copy_locations(locs);
+        self.delete_locations(locs);
+        copied
     }
 
     pub fn insert_signal_after(&mut self, loc: Option<SignalLocation>, cfg: SignalRowConfig) {
@@ -293,6 +341,46 @@ impl SignalListDocument {
             self.rows.insert(pos, DisplayedNode::Signal(cfg));
         } else {
             self.rows.push(DisplayedNode::Signal(cfg));
+        }
+    }
+
+    pub fn insert_signals_after(
+        &mut self,
+        anchor: Option<SignalLocation>,
+        configs: &[SignalRowConfig],
+    ) {
+        if let Some(l) = anchor {
+            if let Some(c_idx) = l.group_child_idx {
+                if let Some(DisplayedNode::Group { children, .. }) = self.rows.get_mut(l.node_idx)
+                {
+                    let base = (c_idx + 1).min(children.len());
+                    for (offset, cfg) in configs.iter().enumerate() {
+                        children.insert(base + offset, cfg.clone());
+                    }
+                    return;
+                }
+            }
+            let base = (l.node_idx + 1).min(self.rows.len());
+            for (offset, cfg) in configs.iter().enumerate() {
+                self.rows
+                    .insert(base + offset, DisplayedNode::Signal(cfg.clone()));
+            }
+        } else {
+            for cfg in configs {
+                self.rows.push(DisplayedNode::Signal(cfg.clone()));
+            }
+        }
+    }
+
+    pub fn update_signals<F: FnMut(&mut SignalRowConfig)>(
+        &mut self,
+        locs: &std::collections::BTreeSet<SignalLocation>,
+        mut f: F,
+    ) {
+        for &loc in locs {
+            if let Some(cfg) = self.get_signal_mut(loc) {
+                f(cfg);
+            }
         }
     }
 
@@ -432,5 +520,73 @@ mod tests {
         assert_eq!(restored.theme, ThemeMode::Dark);
         assert_eq!(restored.markers.len(), 1);
         assert_eq!(restored.rows.len(), 1);
+    }
+
+    #[test]
+    fn test_batch_select_cut_paste_and_radix_update() {
+        use std::collections::BTreeSet;
+        let mut doc = SignalListDocument {
+            rows: vec![
+                DisplayedNode::Signal(SignalRowConfig::new("top.a", 8)),
+                DisplayedNode::Group {
+                    name: "G1".into(),
+                    collapsed: false,
+                    children: vec![
+                        SignalRowConfig::new("top.g_b", 16),
+                        SignalRowConfig::new("top.g_c", 16),
+                        SignalRowConfig::new("top.g_d", 16),
+                    ],
+                },
+                DisplayedNode::Signal(SignalRowConfig::new("top.e", 32)),
+            ],
+            ..Default::default()
+        };
+
+        let all = doc.all_signal_locations();
+        assert_eq!(all.len(), 5);
+
+        // Select top.a (0, None), top.g_b (1, Some(0)), top.g_d (1, Some(2)), and top.e (2, None)
+        let sel: BTreeSet<SignalLocation> = [
+            SignalLocation { node_idx: 0, group_child_idx: None },
+            SignalLocation { node_idx: 1, group_child_idx: Some(0) },
+            SignalLocation { node_idx: 1, group_child_idx: Some(2) },
+            SignalLocation { node_idx: 2, group_child_idx: None },
+        ]
+        .into_iter()
+        .collect();
+
+        // Batch update radix to Dec and signedness to Signed2s
+        doc.update_signals(&sel, |cfg| {
+            cfg.radix = Radix::Dec;
+            cfg.signedness = Signedness::Signed2s;
+        });
+        assert_eq!(
+            doc.get_signal(SignalLocation { node_idx: 1, group_child_idx: Some(2) }).unwrap().radix,
+            Radix::Dec
+        );
+        // Unselected top.g_c (1, Some(1)) remains Hex
+        assert_eq!(
+            doc.get_signal(SignalLocation { node_idx: 1, group_child_idx: Some(1) }).unwrap().radix,
+            Radix::Hex
+        );
+
+        // Cut selected items: must return 4 items in ascending order and leave only Group G1 with [top.g_c]
+        let cut = doc.cut_locations(&sel);
+        let cut_paths: Vec<&str> = cut.iter().map(|c| c.signal_path.as_str()).collect();
+        assert_eq!(cut_paths, vec!["top.a", "top.g_b", "top.g_d", "top.e"]);
+        assert_eq!(doc.all_signal_locations().len(), 1);
+        assert_eq!(
+            doc.get_signal(SignalLocation { node_idx: 0, group_child_idx: Some(0) })
+                .unwrap()
+                .signal_path,
+            "top.g_c"
+        );
+
+        // Paste cut items after remaining signal: preserves order
+        doc.insert_signals_after(
+            Some(SignalLocation { node_idx: 0, group_child_idx: Some(0) }),
+            &cut,
+        );
+        assert_eq!(doc.all_signal_locations().len(), 5);
     }
 }
