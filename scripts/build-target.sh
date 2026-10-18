@@ -102,7 +102,8 @@ if [ ! -f "$BIN_PATH" ]; then
     exit 1
 fi
 
-STAGE_DIR="target/${TARGET}/release/stage_vcd_viewer"
+PACKAGE_NAME="vcd-viewer-v${VERSION}-${TARGET}"
+STAGE_DIR="target/${TARGET}/release/${PACKAGE_NAME}"
 rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR"
 
@@ -111,16 +112,20 @@ cp README.md "$STAGE_DIR/"
 cp LICENSE-MIT "$STAGE_DIR/"
 cp LICENSE-APACHE "$STAGE_DIR/"
 
-ARCHIVE="vcd-viewer-v${VERSION}-${TARGET}.${ARCHIVE_EXT}"
+ARCHIVE="${PACKAGE_NAME}.${ARCHIVE_EXT}"
 echo "--> Packaging dist/${ARCHIVE}..."
 
 if [ "$ARCHIVE_EXT" = "zip" ]; then
     (
         cd "$(dirname "$STAGE_DIR")"
-        zip -r -q "${ROOT_DIR}/dist/${ARCHIVE}" "$(basename "$STAGE_DIR")"
+        if command -v zip >/dev/null 2>&1; then
+            zip -r -q "${ROOT_DIR}/dist/${ARCHIVE}" "${PACKAGE_NAME}"
+        elif command -v 7z >/dev/null 2>&1; then
+            7z a "${ROOT_DIR}/dist/${ARCHIVE}" "${PACKAGE_NAME}" >/dev/null
+        fi
     )
 else
-    tar -czf "dist/${ARCHIVE}" -C "$(dirname "$STAGE_DIR")" "$(basename "$STAGE_DIR")"
+    tar -czf "dist/${ARCHIVE}" -C "$(dirname "$STAGE_DIR")" "${PACKAGE_NAME}"
 fi
 
 rm -rf "$STAGE_DIR"
