@@ -25,6 +25,9 @@ A fast, cross-platform, modern Value Change Dump (VCD) waveform viewer written i
   - [Waveform & Navigation (Synopsys nWave Compatible)](#waveform--navigation-synopsys-nwave-compatible)
   - [Signal Pane Shortcuts](#signal-pane-shortcuts)
 - [SystemVerilog Example (Verilator)](#systemverilog-example-verilator)
+- [Building & Releasing](#building--releasing)
+  - [Local Build Scripts](#local-build-scripts)
+  - [Automated Multi-Platform CI/CD](#automated-multi-platform-cicd)
 - [Project Architecture](#project-architecture)
 - [License](#license)
 
@@ -205,12 +208,65 @@ Files included in the example:
 
 ---
 
+## Building & Releasing
+
+### Local Build Scripts
+
+A suite of local scripts under [`scripts/`](scripts/) allows developers to test, build, and package any target locally into `dist/` without relying on CI:
+
+```bash
+# Build and package the WebAssembly (WASM) bundle
+./scripts/build-web.sh
+
+# Build and package the native desktop app for your current host OS & architecture
+./scripts/build-desktop.sh
+
+# Build and package any specific target architecture:
+./scripts/build-target.sh aarch64-apple-darwin
+./scripts/build-target.sh x86_64-apple-darwin
+./scripts/build-target.sh x86_64-unknown-linux-gnu
+./scripts/build-target.sh aarch64-unknown-linux-gnu
+./scripts/build-target.sh x86_64-pc-windows-msvc
+./scripts/build-target.sh aarch64-pc-windows-msvc
+
+# Build both Web and local native desktop targets:
+./scripts/build-target.sh all-local
+
+# Recompute SHA256 checksums across all archives in dist/:
+./scripts/package-release.sh
+```
+
+All packaged archives are placed in `dist/` along with a verified `SHA256SUMS.txt`.
+
+### Automated Multi-Platform CI/CD
+
+An automated GitHub Actions workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)) is triggered whenever a version tag matching `vx.y.z` is pushed:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+The workflow:
+1. Concurrently builds release packages across 7 targets:
+   - **Linux**: `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu` (`.tar.gz`)
+   - **macOS**: `x86_64-apple-darwin` (Intel) and `aarch64-apple-darwin` (Apple Silicon) (`.tar.gz`)
+   - **Windows**: `x86_64-pc-windows-msvc` and `aarch64-pc-windows-msvc` (`.zip`)
+   - **Web**: `wasm32-unknown-unknown` via Trunk (`.zip`)
+2. Packages binaries alongside `README.md`, `LICENSE-MIT`, and `LICENSE-APACHE`.
+3. Verifies build success across all matrix jobs and computes unified `SHA256SUMS.txt`.
+4. Creates a **Draft GitHub Release** with all 7 archives attached, ready for human manual review and release publication.
+
+---
+
 ## Project Architecture
 
 ```
 vcd-viewer/
+├── assets/                  # App branding, icons (SVG, PNG, ICO) and favicons
+├── scripts/                 # Local build, packaging, and icon generator scripts
 ├── src/
-│   ├── main.rs              # Native entry point
+│   ├── main.rs              # Native entry point & app icon loader
 │   ├── lib.rs               # Library & WASM entry point (wasm-bindgen)
 │   ├── byte_source.rs       # Abstract memory / chunked file byte streaming
 │   ├── vcd_header.rs        # VCD header, timespec, and scope tree parser
@@ -226,10 +282,13 @@ vcd-viewer/
 │       └── hierarchy_modal.rs # Scope tree browser with search & Shift-range selection
 ├── example/                 # SystemVerilog Verilator simulation example
 ├── docs/images/             # Documentation screenshots
-├── index.html               # WebAssembly HTML shell
+├── index.html               # WebAssembly HTML shell & favicon links
 ├── Trunk.toml               # Trunk build configuration
+├── LICENSE-MIT              # MIT License
+├── LICENSE-APACHE            # Apache 2.0 License
 └── Cargo.toml               # Rust dependencies & target configuration
 ```
+
 
 ---
 
