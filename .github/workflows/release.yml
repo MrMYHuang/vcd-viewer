@@ -1,0 +1,189 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-native:
+    name: Build Native (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+            cross: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            archive: tar.gz
+            cross: true
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar.gz
+            cross: false
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive: tar.gz
+            cross: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+            cross: false
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            archive: zip
+            cross: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux' && !matrix.cross
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libasound2-dev libudev-dev libx11-dev libxkbcommon-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+
+      - name: Install Cross for Linux AArch64
+        if: matrix.cross
+        run: |
+          cargo install cross --git https://github.com/cross-rs/cross.git --tag v0.2.5
+
+      - name: Build release binary
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }}
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
+        shell: bash
+
+      - name: Package native archive
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ -z "$TAG" ] || [ "$TAG" = "$GITHUB_REF" ]; then
+            TAG="v$(awk -F'"' '/^version *=/ {print $2; exit}' Cargo.toml)"
+          fi
+
+          mkdir -p dist
+          BIN_EXT=""
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            BIN_EXT=".exe"
+          fi
+
+          BIN_PATH="target/${{ matrix.target }}/release/vcd-viewer${BIN_EXT}"
+          STAGE_DIR="stage_vcd_viewer"
+          rm -rf "$STAGE_DIR"
+          mkdir -p "$STAGE_DIR"
+
+          cp "$BIN_PATH" "$STAGE_DIR/"
+          cp README.md "$STAGE_DIR/"
+          cp LICENSE-MIT "$STAGE_DIR/"
+          cp LICENSE-APACHE "$STAGE_DIR/"
+
+          ARCHIVE_NAME="vcd-viewer-${TAG}-${{ matrix.target }}.${{ matrix.archive }}"
+
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            if command -v 7z >/dev/null 2>&1; then
+              7z a "dist/${ARCHIVE_NAME}" "./${STAGE_DIR}/*"
+            else
+              zip -r -q "dist/${ARCHIVE_NAME}" "$STAGE_DIR"
+            fi
+          else
+            tar -czf "dist/${ARCHIVE_NAME}" "$STAGE_DIR"
+          fi
+
+          rm -rf "$STAGE_DIR"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  build-web:
+    name: Build Web (wasm32-unknown-unknown)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install Trunk
+        run: |
+          curl -L -o /tmp/trunk.tar.gz https://github.com/thedodd/trunk/releases/download/v0.21.14/trunk-x86_64-unknown-linux-gnu.tar.gz
+          tar -xzf /tmp/trunk.tar.gz -C /usr/local/bin
+          chmod +x /usr/local/bin/trunk
+
+      - name: Build web application
+        run: trunk build --release
+
+      - name: Package web archive
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [ -z "$TAG" ] || [ "$TAG" = "$GITHUB_REF" ]; then
+            TAG="v$(awk -F'"' '/^version *=/ {print $2; exit}' Cargo.toml)"
+          fi
+
+          mkdir -p artifacts
+          ARCHIVE_NAME="vcd-viewer-${TAG}-web.zip"
+          (
+            cd dist
+            zip -r -q "../artifacts/${ARCHIVE_NAME}" .
+          )
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-web
+          path: artifacts/*
+          if-no-files-found: error
+
+  create-draft-release:
+    name: Create Draft Release
+    runs-on: ubuntu-latest
+    needs: [build-native, build-web]
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          merge-multiple: true
+          path: release-dist
+
+      - name: Generate SHA256 checksums
+        working-directory: release-dist
+        run: |
+          sha256sum * > SHA256SUMS.txt
+          echo "Generated checksums:"
+          cat SHA256SUMS.txt
+
+      - name: Publish Draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            release-dist/*.tar.gz
+            release-dist/*.zip
+            release-dist/SHA256SUMS.txt
