@@ -33,6 +33,7 @@ To distribute `vcd-viewer` to end users and hardware engineers seamlessly:
   - Windows: `.zip` containing `vcd-viewer.exe`, `README.md`, and license files.
   - Web: `.zip` containing the full static site `dist/` directory (`index.html`, `.wasm`, `.js`).
 - **Integrity Verification**: Generate a single `SHA256SUMS.txt` listing SHA-256 hashes of all 7 published archives.
+- **Local Test & Build Scripts**: Provide robust shell scripts (under `scripts/`, e.g. `scripts/build-target.sh` and `scripts/package-release.sh`) allowing developers to locally build, test, and package any individual target or all locally compatible targets (including Web via Trunk and cross-targets) into `dist/` with checksums without relying on GitHub Actions.
 - **Draft Release Gate**: Use `softprops/action-gh-release@v2` with `draft: true` so no public release is published automatically without human manual trigger.
 - **Icon Assets & Integration**:
   - Crisp glowing cyan/amber digital logic waveform traces on a dark slate rounded squircle.
@@ -139,7 +140,40 @@ A downstream aggregation job `create-release`:
 
 ---
 
-## 5. What is Left to the Builder
+## 5. Local Build & Packaging Scripts
+
+To enable fast iteration, local debugging, and dry-run packaging without pushing Git tags, a suite of scripts under `scripts/` will be provided:
+
+### 5.1 `scripts/build-target.sh`
+A unified script capable of building and packaging any target locally:
+```bash
+# Usage:
+./scripts/build-target.sh <target-name> [version]
+
+# Examples:
+./scripts/build-target.sh web
+./scripts/build-target.sh aarch64-apple-darwin
+./scripts/build-target.sh x86_64-apple-darwin
+./scripts/build-target.sh x86_64-unknown-linux-gnu
+./scripts/build-target.sh x86_64-pc-windows-msvc
+./scripts/build-target.sh all-local  # Builds web and host native target
+```
+Responsibilities:
+1. **Target Check**: Ensures the target toolchain is installed via `rustup target add <target>`.
+2. **Tool Verification**: Checks for prerequisite tools (`trunk` for web, `zip`, `tar`, `sha256sum`/`shasum`).
+3. **Compilation**: Runs `cargo build --release --target <target>` or `trunk build --release`.
+4. **Artifact Packaging**: Bundles the resulting binary, `README.md`, and license files into `dist/vcd-viewer-v<version>-<target>.<ext>`.
+5. **Checksums**: Updates or appends to `dist/SHA256SUMS.txt`.
+
+### 5.2 Standalone Target Scripts
+For convenience, direct scripts can be invoked individually:
+- `scripts/build-web.sh`: Compiles and packages the WASM static site via Trunk into `dist/vcd-viewer-vX.Y.Z-web.zip`.
+- `scripts/build-desktop.sh`: Compiles and packages for the local host platform.
+- `scripts/package-release.sh`: Aggregates and verifies checksums for all archives currently present in `dist/`.
+
+---
+
+## 6. What is Left to the Builder
 
 - Exact selection of cross-compilation tool for Linux aarch64 (`cargo-zigbuild` vs `cross` vs apt cross-compiler) based on GitHub Actions reliability.
 - SVG generation script or generator for the icon files in `assets/`.
@@ -147,14 +181,17 @@ A downstream aggregation job `create-release`:
 
 ---
 
-## 6. Verification Plan
+## 7. Verification Plan
 
 1. **Local Icon Verification**:
    - Verify `assets/icon-256.png` and `assets/icon.ico` render properly.
    - Run `cargo run --release` and verify the window icon in the dock/taskbar.
    - Run `trunk serve --release` and verify the browser favicon.
-2. **Workflow Syntax & Lint Verification**:
-   - Validate `.github/workflows/release.yml` with `actionlint` or strict YAML parse.
-   - Test artifact archive generation scripts.
-3. **End-to-End Simulation**:
+2. **Local Build Scripts Verification**:
+   - Run `./scripts/build-target.sh web` and verify `dist/vcd-viewer-*-web.zip` is created.
+   - Run `./scripts/build-target.sh $(rustc -vV | sed -n 's|host: ||p')` and verify the local native archive and `dist/SHA256SUMS.txt`.
+3. **Workflow Syntax & Lint Verification**:
+   - Validate `.github/workflows/release.yml` with strict YAML / GitHub Actions schema parse.
+4. **End-to-End Simulation**:
    - Push a test tag (or run a `workflow_dispatch` dry-run if configured) to confirm all 7 targets compile, archives are generated, and a draft release appears in GitHub Releases with attached artifacts and `SHA256SUMS.txt`.
+
