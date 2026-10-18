@@ -3,12 +3,34 @@
 use vcd_viewer::ui::VcdViewerApp;
 
 #[cfg(not(target_arch = "wasm32"))]
+fn load_app_icon() -> Option<std::sync::Arc<egui::IconData>> {
+    let icon_bytes = include_bytes!("../assets/icon-256.png");
+    if let Ok(img) = image::load_from_memory(icon_bytes) {
+        let rgba = img.into_rgba8();
+        let (width, height) = rgba.dimensions();
+        Some(std::sync::Arc::new(egui::IconData {
+            rgba: rgba.into_raw(),
+            width,
+            height,
+        }))
+    } else {
+        None
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result<()> {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1360.0, 820.0])
+        .with_min_inner_size([800.0, 480.0])
+        .with_title("VCD Waveform Viewer");
+
+    if let Some(icon) = load_app_icon() {
+        viewport = viewport.with_icon(icon);
+    }
+
     let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1360.0, 820.0])
-            .with_min_inner_size([800.0, 480.0])
-            .with_title("VCD Waveform Viewer"),
+        viewport,
         ..Default::default()
     };
     eframe::run_native(
